@@ -65,7 +65,7 @@ def project_fst(mol, rot_mat):
     print(np.max(np.abs(np.imag(plane_image))))
     return np.real(np.fft.ifftn(np.fft.ifftshift(plane_samples)))
 
-K = 40
+K = 20
 images = []
 orientations = []
 for i in range(K):
@@ -95,7 +95,7 @@ def reconstruct(images, orientations):
         local_coords_grid = np.stack([local_x, local_y, local_z], axis = 3)
         local_smear = np.sinc(np.pi*local_z)
         local_real_interpolator = RegularGridInterpolator((freq_range, freq_range), np.real(images_hat[i]), bounds_error = False, fill_value = 0)
-        local_imag_interpolator = RegularGridInterpolator((freq_range, freq_range), np.real(images_hat[i]), bounds_error = False, fill_value = 0)
+        local_imag_interpolator = RegularGridInterpolator((freq_range, freq_range), np.imag(images_hat[i]), bounds_error = False, fill_value = 0)
         local_plane = np.stack((local_x, local_y), axis = 3)
         local_image_hat = local_real_interpolator(local_plane) + local_imag_interpolator(local_plane)*1j
         local_backproj_hat = local_image_hat*local_smear
