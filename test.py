@@ -74,12 +74,11 @@ def project_fst(mol, rot_mat):
     scalings = np.real(np.exp(scalings))* (1/(N**3))
     rho_fft = rho_fft*scalings
 
-    #Two interpolators for the FT, one for real and one for imaginary
-    FT_Re_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), np.real(rho_fft), bounds_error = False, fill_value = 0)
-    FT_Im_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), np.imag(rho_fft), bounds_error = False, fill_value = 0)
+    #interpolator for the FT
+    FT_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), rho_fft, bounds_error = False, fill_value = 0)
 
     #interpolating the FT on our rotated grid
-    plane_samples = FT_Re_interpolator(plane_vals) + FT_Im_interpolator(plane_vals)*1j
+    plane_samples = FT_interpolator(plane_vals)
 
     #inverse scaling our FT according to PSF before interpolating
     inverse_scalings = np.stack(np.meshgrid(freq_range,freq_range), axis = 2)
@@ -96,7 +95,7 @@ def project_fst(mol, rot_mat):
 
 def project_fst_padded(mol, rot_mat):
     #padding the image by 50 zeros on all sides
-    mol = np.pad(mol, (50, 50), 'constant', constant_values = (0))
+    mol = np.pad(mol, (10, 10), 'constant', constant_values = (0))
 
     #FT (3d)
     rho_fft = np.fft.fftshift(np.fft.fftn(mol))
@@ -122,12 +121,11 @@ def project_fst_padded(mol, rot_mat):
     scalings = np.exp(scalings)* (1/(N**3))
     rho_fft = rho_fft*scalings
 
-    #interpolators for the FT
-    FT_Re_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), np.real(rho_fft), bounds_error = False, fill_value = 0)
-    FT_Im_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), np.imag(rho_fft), bounds_error = False, fill_value = 0)
+    #interpolator for the FT
+    FT_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), rho_fft, bounds_error = False, fill_value = 0)
 
     #interpolating the FT on our sampling grid
-    plane_samples = FT_Re_interpolator(plane_vals) + FT_Im_interpolator(plane_vals)*1j
+    plane_samples = FT_interpolator(plane_vals)
 
     #inverse scaling our FT before inverse FT
     inverse_scalings = np.stack(np.meshgrid(freq_range,freq_range), axis = 2)
@@ -140,7 +138,7 @@ def project_fst_padded(mol, rot_mat):
 
     #printing largest imaginary value post inverse FT (should be very small)
     print(np.max(np.abs(np.imag(plane_image))))
-    return np.real(plane_image)[50:203, 50:203]
+    return np.real(plane_image)[10:163, 10:163]
 
 #K is number of images to take
 K = 0
@@ -149,12 +147,12 @@ orientations = []
 for i in range(K):
     mat = ortho_group.rvs(3)
     orientations.append(mat)
-    images.append(project_fst_padded(rho, mat))
+    images.append(project_fst(rho, mat))
 
 def reconstruct(images, orientations):
     #pad each image
     for i in range(len(images)):
-        images[i] = np.pad(images[i], (25, 25), 'constant', constant_values = (0))
+        images[i] = np.pad(images[i], (10, 10), 'constant', constant_values = (0))
     N = images[0].shape[0]
 
     #set the frequency range
@@ -192,15 +190,14 @@ def reconstruct(images, orientations):
         #smearing on the local_z coordinates
         local_smear = np.sinc(local_z)
 
-        #interpolators for the local_x and local_y coordinates. Interpolatres on the FT
-        local_real_interpolator = RegularGridInterpolator((freq_range, freq_range), np.real(images_hat[i]), bounds_error = False, fill_value = 0)
-        local_imag_interpolator = RegularGridInterpolator((freq_range, freq_range), np.imag(images_hat[i]), bounds_error = False, fill_value = 0)
+        # #interpolator for the local_x and local_y coordinates. Interpolatres on the FT
+        local_interpolator = RegularGridInterpolator((freq_range, freq_range), images_hat[i], bounds_error = False, fill_value = 0)
 
         #combining local_x and local_y to a plane to run the interpolators on
         local_plane = np.stack((local_x, local_y), axis = 3)
 
         #interpolated values on the plane
-        local_image_hat = local_real_interpolator(local_plane) + local_imag_interpolator(local_plane)*1j
+        local_image_hat = local_interpolator(local_plane)
 
         #local back projection
         local_backproj_hat = local_image_hat*local_smear
@@ -213,17 +210,17 @@ def reconstruct(images, orientations):
     print('done smearing')
 
     #summing the back projections
-    back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0)
+    # back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0)
 
     #summing the back projections with scaling
-    # back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0) / np.sum(np.array(local_smear_list), axis = 0)
+    back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0) / np.sum(np.array(local_smear_list), axis = 0)
 
     '''loop to replace any zeros from the scaling with 0 elements after division'''
-    # for i in range(N):
-    #     for m in range(N):
-    #         for k in range(N):
-    #             if (np.isinf(back_proj_hat[i,m,k])):
-    #                 back_proj_hat[i,m,k] = 0
+    for i in range(N):
+        for m in range(N):
+            for k in range(N):
+                if (np.isinf(back_proj_hat[i,m,k])):
+                    back_proj_hat[i,m,k] = 0
 
 
     #inverting scalings before inverse FT
@@ -235,7 +232,7 @@ def reconstruct(images, orientations):
     print('ready to inverse fourier transform')
     back_proj = np.fft.ifftn(np.fft.ifftshift(back_proj_hat))
     print(np.max(np.imag(back_proj)))
-    return np.real(back_proj)[25:178, 25:178, 25:178]
+    return np.real(back_proj)[10:163, 10:163, 10:163]
 
 '''tests identity rotation'''
 # awk = reconstruct([project_fst(rho, I)], [I])
@@ -244,7 +241,7 @@ def reconstruct(images, orientations):
 # awk = reconstruct(images, orientations)
 
 '''Saves them to the mrc files test.mrc'''
-# with mrcfile.new('test.mrc', overwrite = True) as mrc:
+# with mrcfile.new('test2.mrc', overwrite = True) as mrc:
 #     mrc.set_data(np.float32(awk))
 
 
