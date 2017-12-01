@@ -7,13 +7,17 @@ import mrcfile
 zika_file = mrcfile.open('zika_153.mrc')
 rho = zika_file.data
 
-cube = np.zeros((200, 200, 200))
-for i in range(50, 150):
-    for m in range(50, 150):
-        for k in range(50, 150):
+cube = np.zeros((100, 100, 100))
+for i in range(40, 60):
+    for m in range(40, 60):
+        for k in range(40, 60):
             cube[i,m,k] = 1
-
-xy_proj = cube[:,:, 100]
+#
+# xy_proj = cube[:,:, 100]
+smol_square = np.zeros((200, 200))
+for i in range(75, 125):
+    for m in range(75, 125):
+        smol_square[i,m] = 1
 
 I = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 R = np.array([[0, 0, 1],[1, 0, 0], [0, 1, 0]])
@@ -46,6 +50,36 @@ def project_fst(mol, rot_mat):
     plane_vals = etas_x*rot_mat[:,0] + etas_y*rot_mat[:,1]
     scalings = np.stack(np.meshgrid(freq_range, freq_range, freq_range), axis = 3)
     scalings = np.sum(scalings, axis = 3)*np.pi*1j
+    scalings = np.real(np.exp(scalings))* (1/(N**3))
+    rho_fft = rho_fft*scalings
+
+    FT_Re_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), np.real(rho_fft), bounds_error = False, fill_value = 0)
+    FT_Im_interpolator = RegularGridInterpolator((freq_range, freq_range, freq_range), np.imag(rho_fft), bounds_error = False, fill_value = 0)
+
+    plane_samples = FT_Re_interpolator(plane_vals) + FT_Im_interpolator(plane_vals)*1j
+    # plane_samples = plane_samples*(N**2)
+    inverse_scalings = np.stack(np.meshgrid(freq_range,freq_range), axis = 2)
+    inverse_scalings = np.sum(inverse_scalings, axis = 2)*np.pi*1j*(-1)
+    inverse_scalings = np.real(np.exp(inverse_scalings))*(N**2)
+    # print(inverse_scalings.shape, plane_samples.shape)
+    plane_samples = inverse_scalings*plane_samples
+    # print(plane_samples.shape)
+
+    plane_image = np.fft.ifftn(np.fft.ifftshift(plane_samples))
+    print(np.max(np.abs(np.imag(plane_image))))
+    return np.real(plane_image)
+
+def project_fst_padded(mol, rot_mat):
+    mol = np.pad(mol, (50, 50), 'constant', constant_values = (0))
+    rho_fft = np.fft.fftshift(np.fft.fftn(mol))
+    N = mol.shape[0]
+    freq_range = np.arange(-(N-1)/2, (N+1)/2)
+    [etas_x, etas_y] = np.meshgrid(freq_range, freq_range)
+    etas_x = etas_x[..., np.newaxis]
+    etas_y = etas_y[..., np.newaxis]
+    plane_vals = etas_x*rot_mat[:,0] + etas_y*rot_mat[:,1]
+    scalings = np.stack(np.meshgrid(freq_range, freq_range, freq_range), axis = 3)
+    scalings = np.sum(scalings, axis = 3)*np.pi*1j
     scalings = np.exp(scalings)* (1/(N**3))
     rho_fft = rho_fft*scalings
 
@@ -63,24 +97,26 @@ def project_fst(mol, rot_mat):
 
     plane_image = np.fft.ifftn(np.fft.ifftshift(plane_samples))
     print(np.max(np.abs(np.imag(plane_image))))
-    return np.real(np.fft.ifftn(np.fft.ifftshift(plane_samples)))
+    return np.real(plane_image)[50:203, 50:203]
 
-K = 20
+K = 0
 images = []
 orientations = []
 for i in range(K):
     mat = ortho_group.rvs(3)
     orientations.append(mat)
-    images.append(project_fst(rho, mat))
+    images.append(project_fst_padded(rho, mat))
 
 def reconstruct(images, orientations):
+    for i in range(len(images)):
+        images[i] = np.pad(images[i], (25, 25), 'constant', constant_values = (0))
     N = images[0].shape[0]
     if (N % 2 == 0):
         freq_range = np.arange(-N/2, N/2)
     else:
         freq_range = np.arange(-(N-1)/2, (N+1)/2)
     sample_grid = np.stack(np.meshgrid(freq_range, freq_range, freq_range), axis = 3)
-    [sample_x, sample_y, sample_z] = np.meshgrid(freq_range, freq_range, freq_range)
+    # [sample_x, sample_y, sample_z] = np.meshgrid(freq_range, freq_range, freq_range)
     images_hat = []
     image_fft_scalings = np.stack(np.meshgrid(freq_range, freq_range), axis = 2)
     image_fft_scalings = np.sum(image_fft_scalings, axis = 2)*np.pi*1j
@@ -91,7 +127,7 @@ def reconstruct(images, orientations):
     local_backproj_hat_list = []
     local_smear_list = []
     for i in range(len(images)):
-        local_x, local_y, local_z = np.tensordot(np.linalg.inv(orientations[i]), sample_grid, axes = (1,3))
+        local_x, local_y, local_z = np.tensordot(np.transpose(orientations[i]), sample_grid, axes = (1,3))
         local_coords_grid = np.stack([local_x, local_y, local_z], axis = 3)
         local_smear = np.sinc(np.pi*local_z)
         local_real_interpolator = RegularGridInterpolator((freq_range, freq_range), np.real(images_hat[i]), bounds_error = False, fill_value = 0)
@@ -102,23 +138,35 @@ def reconstruct(images, orientations):
 
         local_backproj_hat_list.append(local_backproj_hat)
         local_smear_list.append(local_smear)
-
-    # back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0) / np.sum(np.array(local_smear_list), axis = 0)
+        print('smear no.' + ' ' + str(i+1))
+    print('done smearing')
     back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0)
+    # back_proj_hat = np.sum(np.array(local_backproj_hat_list), axis = 0) / np.sum(np.array(local_smear_list), axis = 0)
+    # for i in range(N):
+    #     for m in range(N):
+    #         for k in range(N):
+    #             if (np.isinf(back_proj_hat[i,m,k])):
+    #                 back_proj_hat[i,m,k] = 0
 
     inverse_scalings = np.stack(np.meshgrid(freq_range,freq_range, freq_range), axis = 3)
     inverse_scalings = np.sum(inverse_scalings, axis = 3)*np.pi*1j*(-1)
     inverse_scalings = np.exp(inverse_scalings)*(N**3)
     back_proj_hat = inverse_scalings*back_proj_hat
+    print('ready to inverse fourier transform')
     back_proj = np.fft.ifftn(np.fft.ifftshift(back_proj_hat))
     print(np.max(np.imag(back_proj)))
-    return np.real(back_proj)
+    return np.real(back_proj)[25:178, 25:178, 25:178]
 
 # awk = reconstruct([project_fst(rho, I)], [I])
-awk = reconstruct(images, orientations)
 
-with mrcfile.new('test.mrc', overwrite = True) as mrc:
-    mrc.set_data(np.float32(awk))
+# awk = reconstruct(images, orientations)
+# # # #
+# with mrcfile.new('test.mrc', overwrite = True) as mrc:
+#     mrc.set_data(np.float32(awk))
+
+
+
+
 # with mrcfile.open('test.mrc') as mrc:
 #     mrc.data
 
