@@ -77,14 +77,14 @@ def reconstruct(images, orientations, verbose=True):
 
     # applies FFT, runs in parallel
     with Pool() as p:
-        images_hat = p.map((lambda im:im_fft_scale * __import__('numpy').fft.fftshift(__import__('numpy').fft.fftn(im))), images)
+        images_hat = p.map((lambda im:im_fft_scale * __import__('numpy')np.fft.fftshift(__import__('numpy').fft.fftn(im))), images)
     # given FT of image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
     def bp_smear(im_r):
         im_hat, R = im_r
         # only necessary on windows
         import numpy as np
         N = im_hat.shape[0]
-        
+        from scipy.interpolate import RegularGridInterpolator as rgi 
         # set the frequency range
         if (N % 2 == 0):
             freq_range = np.arange(-N/2, N/2)
@@ -93,14 +93,14 @@ def reconstruct(images, orientations, verbose=True):
 
         # creating the sample grid
         sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range)).T
- 
+
         '''rotating the sample_grid by multiplying by rotation matrix transpose
         Since R is orthonormal, this is the same as inverting
         Multiplying by R transpose gives us the coordinates in the local basis
         '''
         local_x, local_y, local_z = np.tensordot(R.T, sample_grid, axes = (1,3))
         #smearing on the local_z coordinates
-        local_smear = np.sinc(local_z)
+        local_smear = np.sinc(2*np.pi/N * local_z)
         
         # #interpolator for the local_x and local_y coordinates. Interpolates on the FT
         local_interpolator = rgi((freq_range, freq_range), im_hat, bounds_error = False, fill_value = 0)
@@ -117,10 +117,8 @@ def reconstruct(images, orientations, verbose=True):
     sample_grid = sample_grid.T
     inverse_scalings = np.sign(1-((np.abs(sample_grid[0] + sample_grid[1] + sample_grid[2]) % 2) * 2)) * N**3
     back_proj_hat = inverse_scalings * back_proj_hat
-    '''
     if (smear.size - np.count_nonzero(smear)) == 0:
         back_proj_hat = back_proj_hat/smear
-    '''
     print('ready to inverse fourier transform')
     back_proj = np.fft.ifftn(np.fft.ifftshift(back_proj_hat))
     print(np.max(np.imag(back_proj)))
