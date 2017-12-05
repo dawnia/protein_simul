@@ -81,7 +81,19 @@ def reconstruct(images, orientations, verbose=True):
     # given FT of image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
     def bp_smear(im_r):
         im_hat, R = im_r
+        # only necessary on windows
+        import numpy as np
+        N = im_hat.shape[0]
+        
+        # set the frequency range
+        if (N % 2 == 0):
+            freq_range = np.arange(-N/2, N/2)
+        else:
+            freq_range = np.arange(-(N-1)/2, (N+1)/2)
 
+        # creating the sample grid
+        sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range)).T
+ 
         '''rotating the sample_grid by multiplying by rotation matrix transpose
         Since R is orthonormal, this is the same as inverting
         Multiplying by R transpose gives us the coordinates in the local basis
