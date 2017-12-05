@@ -78,7 +78,6 @@ def reconstruct(images, orientations, verbose=True):
     # applies FFT, runs in parallel
     with Pool() as p:
         images_hat = p.map((lambda im: im_fft_scale * np.fft.fftshift(np.fft.fftn(im))), images)
-    
     # given FT of image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
     def bp_smear(im_r):
         im_hat, R = im_r
@@ -95,6 +94,7 @@ def reconstruct(images, orientations, verbose=True):
         local_interpolator = rgi((freq_range, freq_range), im_hat, bounds_error = False, fill_value = 0)
         #local back projection
         local_backproj_hat = local_interpolator(np.stack((local_x, local_y), axis = 3)) * local_smear
+        print('completed smear')
         return (local_backproj_hat, local_smear)
 
     # sum local back projections 
