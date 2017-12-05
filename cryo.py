@@ -6,7 +6,6 @@ from scipy.fftpack import next_fast_len
 from pathos.multiprocessing import Pool
 from functools import reduce
 
-
 '''
 simulates EM results given molecule mol and rotation matrix R
 '''
@@ -20,8 +19,10 @@ def project_fst(mol, R, return_hat=False):
         w = np.arange(-N/2, N/2)
     else:
         w = np.arange(-(N-1)/2, (N+1)/2)
-    mol = np.zeropad()
-
+    
+    # pad as roughly evenly
+    mol = np.pad(mol, (np.ceil((N-mol.shape[0])/2).astype('int'), np.floor((N-mol.shape[0])/2).astype('int')), mode='constant')
+    # coordinate grid
     omega = np.meshgrid(w,w,w)
     
     # Fourier transform
@@ -59,7 +60,7 @@ def project_fst(mol, R, return_hat=False):
     return im
 
 def reconstruct(images, orientations, verbose=True):
-    N = next_fast_len(images[0].shape[0])
+    N = images[0].shape[0]
 
     # set the frequency range
     if (N % 2 == 0):
@@ -68,55 +69,51 @@ def reconstruct(images, orientations, verbose=True):
         freq_range = np.arange(-(N-1)/2, (N+1)/2)
 
     # creating the sample grid
-    sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range))
-
-    # calculate scalings by Poisson summation formula
-    im_fft_scale = np.sign((1 - (np.abs(sample_grid[0] + sample_grid[1] + sample_grid[2]) % 2)*2)) / (N**3)
-    sample_grid = sample_grid.T
+    sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range)).T
+    eta_x, eta_y = np.meshgrid(freq_range, freq_range) 
+    # PSF scaling (take advantage of integer frequences, modulo stuff is faster than taking powers)
+    im_fft_scale = np.sign((1 - (np.abs(eta_x + eta_y) % 2)*2)) / (N**2)
     gc.collect()
 
-    # generator to apply FFT, runs in parallel
+    # applies FFT, runs in parallel
     with Pool() as p:
         images_hat = p.map((lambda im: im_fft_scale * np.fft.fftshift(np.fft.fftn(im))), images)
     
-    # given image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
+    # given FT of image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
     def bp_smear(im_r):
-        im, R = im_r
+        im_hat, R = im_r
+
         '''rotating the sample_grid by multiplying by rotation matrix transpose
         Since R is orthonormal, this is the same as inverting
         Multiplying by R transpose gives us the coordinates in the local basis
         '''
         local_x, local_y, local_z = np.tensordot(R.T, sample_grid, axes = (1,3))
-
         #smearing on the local_z coordinates
         local_smear = np.sinc(local_z)
-
+        
         # #interpolator for the local_x and local_y coordinates. Interpolates on the FT
-        local_interpolator = rgi((freq_range, freq_range), im, bounds_error = False, fill_value = 0)
-
+        local_interpolator = rgi((freq_range, freq_range), im_hat, bounds_error = False, fill_value = 0)
         #local back projection
         local_backproj_hat = local_interpolator(np.stack((local_x, local_y), axis = 3)) * local_smear
+        return (local_backproj_hat, local_smear)
 
-        #print('smear no.', str(i+1))
-        gc.collect()
-        return (local_back_proj_hat, local_smear)
-
-    # sum local 
+    # sum local back projections 
     with Pool() as p:
-        back_proj_hat, smear = tuple(map(sum, p.imap_unordered(bp_smear, zip(images_hat, orientations))))
-        
-        '''
-        back_proj_hat, smear = map(sum, zip(*p.map(bp_smear, zip(images_hat, orientations))))
-        '''
-
+        back_proj_hat, smear = reduce((lambda x,y: (x[0] + y[0], x[1] + y[1])), p.imap_unordered(bp_smear, zip(images_hat, orientations)))
+    
     #inverting scalings before inverse FT
-    inverse_scalings = im_fft_scale * N**6
+    sample_grid = sample_grid.T
+    inverse_scalings = np.sign(1-((np.abs(sample_grid[0] + sample_grid[1] + sample_grid[2]) % 2) * 2)) * N**3
     back_proj_hat = inverse_scalings * back_proj_hat
-
+    '''
+    if (smear.size - np.count_nonzero(smear)) == 0:
+        back_proj_hat = back_proj_hat/smear
+    '''
     print('ready to inverse fourier transform')
     back_proj = np.fft.ifftn(np.fft.ifftshift(back_proj_hat))
     print(np.max(np.imag(back_proj)))
-    return np.real(back_proj)
+    return np.real(back_proj).astype('float32')
+
 
 '''
 estimates orientations given list of images
