@@ -77,10 +77,14 @@ def reconstruct(images, orientations, verbose=True):
 
     # applies FFT, runs in parallel
     with Pool() as p:
-        images_hat = p.map((lambda im:im_fft_scale * __import__('numpy')np.fft.fftshift(__import__('numpy').fft.fftn(im))), images)
+        images_hat = p.map((lambda im:im_fft_scale * __import__('numpy').fft.fftshift(__import__('numpy').fft.fftn(im))), images)
+        '''
+        images_hat = p.map((lambda im:im_fft_scale * np.fft.fftshift(np.fft.fftn(im))), images)
+        '''
     # given FT of image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
     def bp_smear(im_r):
         im_hat, R = im_r
+
         # only necessary on windows
         import numpy as np
         N = im_hat.shape[0]
@@ -93,7 +97,6 @@ def reconstruct(images, orientations, verbose=True):
 
         # creating the sample grid
         sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range)).T
-
         '''rotating the sample_grid by multiplying by rotation matrix transpose
         Since R is orthonormal, this is the same as inverting
         Multiplying by R transpose gives us the coordinates in the local basis
