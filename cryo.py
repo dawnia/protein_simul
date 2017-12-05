@@ -151,22 +151,11 @@ def estimate_orientations(images):
 
 '''
 adds Gaussian noise to image im given signal-to-noise ratio r
-power mode uses ratio of signal power:noise power
-variance mode use ratio of signal mean:noise standard deviation
-
-'''
 '''
 def add_noise(im, r, mode='power'):
-    if mode == 'power':
-        mu = np.linalg.norm(im)/im.size
-        # calculate noise power
-        noise_power = np.mean(im) / r
-        # return noised image
-        return (im + np.random.randn(im.shape) + mu)
-    elif mode == 'variance':
-        # calculate noise signal standard deviation
-        noise_sigma = np.mean(im) / r
-        # return noised image
-        return (im + np.random.randn(scale = noise_sigma))
-'''
+    mu = np.mean(im)
+    # calculate noise variance
+    sigma = mu / r
+    # return noised image
+    return im + sigma * np.random.randn(im.shape[0], im.shape[1])
 
