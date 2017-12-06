@@ -46,14 +46,13 @@ def project_fst(mol, R, return_hat=False):
     
     # scaling factor
     im_hat = np.multiply(im_hat, np.sign((1 - (np.abs(eta_x + eta_y) % 2)*2))) * N * N
-    
     # returns im_hat if return_hat argument is true
     if return_hat:
         return im_hat
     
     # apply inverse FFT to translate back to original space
     im = np.real(np.fft.ifftn(np.fft.ifftshift(im_hat[:,:,0])))
-    
+     
     # memory saving stuff
     del im_hat
     gc.collect()
@@ -77,14 +76,14 @@ def reconstruct(images, orientations, verbose=True):
 
     # applies FFT, runs in parallel
     with Pool() as p:
+        '''
         images_hat = p.map((lambda im:im_fft_scale * __import__('numpy').fft.fftshift(__import__('numpy').fft.fftn(im))), images)
         '''
         images_hat = p.map((lambda im:im_fft_scale * np.fft.fftshift(np.fft.fftn(im))), images)
-        '''
     # given FT of image and orientation as pair im_r, returns Fourier space back projection and convolution kernel
     def bp_smear(im_r):
         im_hat, R = im_r
-
+        '''
         # only necessary on windows
         import numpy as np
         N = im_hat.shape[0]
@@ -97,19 +96,22 @@ def reconstruct(images, orientations, verbose=True):
 
         # creating the sample grid
         sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range)).T
+        '''
         '''rotating the sample_grid by multiplying by rotation matrix transpose
         Since R is orthonormal, this is the same as inverting
         Multiplying by R transpose gives us the coordinates in the local basis
         '''
         local_x, local_y, local_z = np.tensordot(R.T, sample_grid, axes = (1,3))
         #smearing on the local_z coordinates
-        local_smear = np.sinc(2*np.pi/N * local_z)
+        local_smear = np.sinc(local_z/N)
         
         # #interpolator for the local_x and local_y coordinates. Interpolates on the FT
         local_interpolator = rgi((freq_range, freq_range), im_hat, bounds_error = False, fill_value = 0)
         #local back projection
         local_backproj_hat = local_interpolator(np.stack((local_x, local_y), axis = 3)) * local_smear
+        '''
         print('completed smear')
+        '''
         return (local_backproj_hat, local_smear)
 
     # sum local back projections 
@@ -122,6 +124,7 @@ def reconstruct(images, orientations, verbose=True):
     back_proj_hat = inverse_scalings * back_proj_hat
     if (smear.size - np.count_nonzero(smear)) == 0:
         back_proj_hat = back_proj_hat/smear
+        print(np.where(np.abs(smear) < 1)[0].size)
     print('ready to inverse fourier transform')
     back_proj = np.fft.ifftn(np.fft.ifftshift(back_proj_hat))
     print(np.max(np.imag(back_proj)))
@@ -165,7 +168,7 @@ def estimate_orientations(images):
 '''
 adds Gaussian noise to image im given signal-to-noise ratio r
 '''
-def add_noise(im, r, mode='power'):
+def add_noise(im, r):
     mu = np.mean(im)
     # calculate noise variance
     sigma = mu / r
