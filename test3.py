@@ -14,11 +14,11 @@ mol = mrcfile.open("zika_153.mrc").data
 
 t0 = time.time()
 # random rotation matrices
-with Pool() as p:
-    orientations = list(map(og.rvs, repeat(3,k)))
-    images = p.map((lambda R: cr.project_fst(mol, R)), orientations)
-    b = cr.reconstruct(images, orientations)
+orientations = list(map(og.rvs, repeat(3,k)))
+images = cr.project_fst_parallel(mol, orientations)
+
+b = cr.reconstruct(images, orientations)
 with mrcfile.new('zika_reconstruction_1.mrc', overwrite=True) as mrc:
     mrc.set_data(b)
- 
-print("Completed", k, "in", time.time()-t0)
+
+print("Completed", k, "projections in", time.time()-t0)
