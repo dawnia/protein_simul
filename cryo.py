@@ -1,18 +1,19 @@
 import numpy as np
 import gc
 from scipy.interpolate import RegularGridInterpolator as rgi
-from scipy.stats import ortho_group
 from scipy.fftpack import next_fast_len
 from pathos.multiprocessing import Pool
 from functools import reduce
 
 '''
 simulates EM results given molecule mol and rotation matrix R
+if return_hat is True, returns FT of image
+pad specifies number of zeros to pad edges with, default is 0
 '''
-def project_fst(mol, R, return_hat=False):
+def project_fst(mol, R, return_hat=False, pad = 0):
 
     # shape of data
-    N = next_fast_len(mol.shape[0])
+    N = next_fast_len(mol.shape[0] + pad)
 
     # set the frequency range
     if (N % 2 == 0):
@@ -58,6 +59,62 @@ def project_fst(mol, R, return_hat=False):
     gc.collect()
     return im
 
+'''
+like project_fst but takes iterable of rotation matrices and runs in parallel
+does not work on Windows
+'''
+def project_fst_parallel(mol, orientations, return_hat = False, pad = 0):
+
+    # shape of data
+    N = next_fast_len(mol.shape[0] + pad)
+
+    # set the frequency range
+    if (N % 2 == 0):
+        w = np.arange(-N/2, N/2)
+    else:
+        w = np.arange(-(N-1)/2, (N+1)/2)
+
+    # pad as roughly evenly
+    mol = np.pad(mol, (np.ceil((N-mol.shape[0])/2).astype('int'), np.floor((N-mol.shape[0])/2).astype('int')), mode='constant')
+    # coordinate grid
+    omega = np.meshgrid(w,w,w)
+
+    # Fourier transform
+    rho_hat = np.fft.fftshift(np.fft.fftn(mol, s=[N,N,N]))
+    rho_hat =  rho_hat * np.sign((1 - (np.abs(omega[0] + omega[1] + omega[2]) % 2)*2)) / N**3
+    del mol
+    # numpy FFT seems to create a lot of mess in memory, explicit garbage collection helps
+    gc.collect()
+
+    # create sampling grid
+    eta_x, eta_y = np.meshgrid(w, w)
+    eta_x = np.expand_dims(eta_x, axis=2)
+    eta_y = np.expand_dims(eta_y, axis=2)
+    def project_(R):
+        grid = eta_x * R.T[0] + eta_y * R.T[1]
+
+        # interpolation function
+        rho_hat_f = rgi((w,w,w), rho_hat, bounds_error = False, fill_value=0)
+
+        # values of data's FFT interpolated to points on slice, tweak dimensions to make broadcasting work
+        im_hat = np.expand_dims(rho_hat_f(grid), axis=2)
+
+        # scaling factor
+        im_hat = np.multiply(im_hat, np.sign((1 - (np.abs(eta_x + eta_y) % 2)*2))) * N * N
+        # returns im_hat if return_hat argument is true
+        if return_hat:
+            return im_hat
+
+        # apply inverse FFT to translate back to original space
+        im = np.real(np.fft.ifftn(np.fft.ifftshift(im_hat[:,:,0])))
+
+        # memory saving stuff
+        del im_hat
+        gc.collect()
+        return im
+    with Pool() as p:
+        images = p.map(project_, orientations)
+    return list(images)
 def reconstruct(images, orientations, verbose=True):
     N = images[0].shape[0]
 
@@ -77,6 +134,7 @@ def reconstruct(images, orientations, verbose=True):
     # applies FFT, runs in parallel
     with Pool() as p:
         '''
+        # use this line on Windows
         images_hat = p.map((lambda im:im_fft_scale * __import__('numpy').fft.fftshift(__import__('numpy').fft.fftn(im))), images)
         '''
         images_hat = p.map((lambda im:im_fft_scale * np.fft.fftshift(np.fft.fftn(im))), images)
@@ -109,9 +167,7 @@ def reconstruct(images, orientations, verbose=True):
         local_interpolator = rgi((freq_range, freq_range), im_hat, bounds_error = False, fill_value = 0)
         #local back projection
         local_backproj_hat = local_interpolator(np.stack((local_x, local_y), axis = 3)) * local_smear
-        '''
         print('completed smear')
-        '''
         return (local_backproj_hat, local_smear)
 
     # sum local back projections
@@ -124,7 +180,6 @@ def reconstruct(images, orientations, verbose=True):
     back_proj_hat = inverse_scalings * back_proj_hat
     if (smear.size - np.count_nonzero(smear)) == 0:
         back_proj_hat = back_proj_hat/smear
-        print(np.where(np.abs(smear) < 1)[0].size)
     print('ready to inverse fourier transform')
     back_proj = np.fft.ifftn(np.fft.ifftshift(back_proj_hat))
     print(np.max(np.imag(back_proj)))
@@ -281,8 +336,9 @@ def estimate_orientations2(images):
 adds Gaussian noise to image im given signal-to-noise ratio r
 '''
 def add_noise(im, r):
-    mu = np.mean(im)
+    im_var = np.var(im)
     # calculate noise variance
-    sigma = mu / r
+    sigma = np.sqrt(im_var / r)
     # return noised image
-    return im + sigma * np.random.randn(im.shape[0], im.shape[1])
+    noise = sigma * np.random.randn(im.shape[0], im.shape[1])
+    return im + noise
