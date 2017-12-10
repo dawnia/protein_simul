@@ -59,7 +59,7 @@ def project_fst_parallel(mol, orientations, return_hat=False, pad=0):
     works like project_fst but takes iterable of rotation matrices and runs in parallel
     does not work on Windows
     """
-    # shape of data
+    # shape of data, apply desired padding and find good size for FFT
     N = next_fast_len(mol.shape[0] + pad)
 
     # set the frequency range
@@ -68,11 +68,11 @@ def project_fst_parallel(mol, orientations, return_hat=False, pad=0):
     else:
         w = np.arange(-(N - 1) / 2, (N + 1) / 2)
 
-    # pad as roughly evenly
+    # pad roughly evenly
     mol = np.pad(mol, (int(np.ceil((N - mol.shape[0]) / 2)), int(np.floor((N - mol.shape[0]) / 2))),
                  mode='constant')
     # coordinate grid
-    omega = np.meshgrid(w, w, w)
+    omega = np.meshgrid(w, w, w, indexing='ij')
 
     # Fourier transform
     rho_hat = np.fft.fftshift(np.fft.fftn(mol))
@@ -80,7 +80,7 @@ def project_fst_parallel(mol, orientations, return_hat=False, pad=0):
     del mol
 
     # create sampling grid
-    eta_x, eta_y = np.meshgrid(w, w)
+    eta_x, eta_y = np.meshgrid(w, w, indexing='ij')
     eta_x = eta_x[:, :, None]
     eta_y = eta_y[:, :, None]
 
@@ -120,8 +120,8 @@ def reconstruct(images, orientations):
         freq_range = np.arange(-(N - 1) / 2, (N + 1) / 2)
 
     # creating the sample grid
-    sample_grid = np.array(np.meshgrid(freq_range, freq_range, freq_range)).T
-    eta_x, eta_y = np.meshgrid(freq_range, freq_range)
+    sample_grid = np.stack(np.meshgrid(freq_range, freq_range, freq_range, indexing='ij'), axis=3)
+    eta_x, eta_y = np.meshgrid(freq_range, freq_range, indexing='ij')
     # PSF scaling (take advantage of integer grid, modulo stuff is faster than taking powers)
     im_fft_scale = np.sign((1 - (np.abs(eta_x + eta_y) % 2) * 2)) / (N ** 2)
 
@@ -171,8 +171,8 @@ def reconstruct(images, orientations):
                                       p.imap_unordered(bp_smear, zip(images_hat, orientations)))
 
     # scaling before inverse FT
-    sample_grid = sample_grid.T
-    back_proj_hat *= np.sign(1 - ((np.abs(sample_grid[0] + sample_grid[1] + sample_grid[2]) % 2) * 2)) * N ** 3
+    #sample_grid = sample_grid.T
+    back_proj_hat *= np.sign(1 - ((np.abs(sample_grid[:,:,:,0] + sample_grid[:,:,:,1] + sample_grid[:,:,:,2]) % 2) * 2)) * N ** 3
     if (smear.size - np.count_nonzero(smear)) == 0:
         back_proj_hat /= smear
     print('ready to inverse fourier transform')
@@ -329,6 +329,17 @@ def estimate_orientations2(images):
 
     return [np.identity(3), F2, F3]
     # return find_best(im1, im2)
+
+'''
+generates 3D rotation matrix given three angles u, v, w
+for x, y, z axes
+'''
+def rotation(u, v, w):
+    Rx = np.array([[1, 0, 0], [0, np.cos(u), -np.sin(u)], [0,np.sin(u), np.cos(u)]])
+    Ry = np.array([[np.cos(v), 0, np.sin(v)], [0, 1, 0], [-np.sin(v), 0, np.cos(v)]])
+    Rz = np.array([[np.cos(w), -np.sin(w), 0], [np.sin(w), np.cos(w), 0], [0,0,1]])
+    R = np.dot(Rz, np.dot(Ry, Rx))
+    return R
 
 
 def add_noise(im, r):
